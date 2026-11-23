@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Time Clock</title>
+  <meta name="description" content="A private, offline time clock. Clock in, clock out, see weekly totals and export PDF timesheets.">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Time Clock">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Time Clock</h1>
+    <button id="installBtn" class="btn small ghost" hidden>Install app</button>
+  </header>
+
+  <main>
+    <!-- CLOCK -->
+    <section id="view-clock" class="view active" aria-label="Clock">
+      <div class="card clock-card">
+        <div class="now-date" id="nowDate"></div>
+        <div class="now-time" id="nowTime"></div>
+        <div class="status" id="status"></div>
+        <div class="shift-timer" id="shiftTimer"></div>
+        <button id="punchBtn" class="punch">Clock In</button>
+        <button id="breakBtn" class="btn wide" hidden>Start Break</button>
+        <div class="note-field" id="noteWrap" hidden>
+          <label for="shiftNote">Notes for this shift</label>
+          <div class="with-mic">
+            <textarea id="shiftNote" rows="2" maxlength="1000" placeholder="Job, location, what you worked on…"></textarea>
+            <button type="button" class="mic" data-for="shiftNote" data-mode="append" aria-label="Dictate note">🎤</button>
+          </div>
+        </div>
+        <button id="voiceCmdBtn" class="btn wide voice-cmd" hidden>🎤 Voice command</button>
+        <p class="hint" id="voiceHint" hidden>Say “clock in”, “clock out at 4:30”, “start break”, “end break”, “note …”, or a whole entry like “yesterday 7 to 3:30 with a 30 minute lunch”.</p>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="label">Today</span><span class="value" id="todayTotal">0:00</span></div>
+        <div class="stat"><span class="label">This week</span><span class="value" id="weekTotal">0:00</span></div>
+        <div class="stat"><span class="label">Overtime</span><span class="value" id="weekOT">0:00</span></div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress"><div class="bar" id="weekBar"></div></div>
+        <div class="progress-label" id="weekBarLabel"></div>
+      </div>
+
+      <div class="card">
+        <h2>Today's punches</h2>
+        <ul class="punch-list" id="todayList"></ul>
+      </div>
+    </section>
+
+    <!-- TIMESHEET -->
+    <section id="view-sheet" class="view" aria-label="Timesheet">
+      <div class="period-nav">
+        <button class="btn icon" id="weekPrev" aria-label="Previous week">‹</button>
+        <div class="period-title">
+          <div id="weekTitle"></div>
+          <button class="link" id="weekToday">Jump to this week</button>
+        </div>
+        <button class="btn icon" id="weekNext" aria-label="Next week">›</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="label">Total</span><span class="value" id="sheetTotal">0:00</span></div>
+        <div class="stat"><span class="label">Regular</span><span class="value" id="sheetReg">0:00</span></div>
+        <div class="stat"><span class="label">Overtime</span><span class="value" id="sheetOT">0:00</span></div>
+      </div>
+      <div class="stat-line" id="sheetPay"></div>
+
+      <div id="sheetDays"></div>
+
+      <div class="row-actions">
+        <button class="btn" id="addEntryBtn">+ Add entry</button>
+        <button class="btn primary" id="sheetPdfBtn">PDF for this week</button>
+      </div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="view-reports" class="view" aria-label="Reports">
+      <div class="card">
+        <h2>Report period</h2>
+        <div class="seg" id="periodSeg" role="tablist">
+          <button data-p="week" class="on">Week</button>
+          <button data-p="biweek">2 Weeks</button>
+          <button data-p="month">Month</button>
+          <button data-p="quarter">Quarter</button>
+          <button data-p="year">Year</button>
+          <button data-p="custom">Custom</button>
+        </div>
+        <div class="period-nav" id="repNav">
+          <button class="btn icon" id="repPrev" aria-label="Previous period">‹</button>
+          <div class="period-title"><div id="repTitle"></div><button class="link" id="repToday">Current period</button></div>
+          <button class="btn icon" id="repNext" aria-label="Next period">›</button>
+        </div>
+        <div class="custom-range" id="customRange" hidden>
+          <label>From <input type="date" id="repFrom"></label>
+          <label>To <input type="date" id="repTo"></label>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="label">Total hours</span><span class="value" id="repTotal">0:00</span></div>
+        <div class="stat"><span class="label">Days worked</span><span class="value" id="repDays">0</span></div>
+        <div class="stat"><span class="label">Avg / day</span><span class="value" id="repAvg">0:00</span></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="label">Regular</span><span class="value" id="repReg">0:00</span></div>
+        <div class="stat"><span class="label">Overtime</span><span class="value" id="repOT">0:00</span></div>
+        <div class="stat"><span class="label">Gross pay</span><span class="value" id="repPay">—</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Breakdown</h2>
+        <div class="table-wrap"><table class="tbl" id="repTable"></table></div>
+      </div>
+
+      <div class="card">
+        <h2>Export</h2>
+        <label class="check"><input type="checkbox" id="optDetail" checked> Include every punch (detailed list)</label>
+        <label class="check"><input type="checkbox" id="optSign"> Include signature lines</label>
+        <div class="row-actions">
+          <button class="btn primary" id="repPdfBtn">Download PDF</button>
+          <button class="btn" id="repCsvBtn">Download CSV</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view" aria-label="Settings">
+      <form class="card form" id="settingsForm">
+        <h2>Timesheet details</h2>
+        <label>Your name <input name="name" type="text" placeholder="Shown on PDFs"></label>
+        <label>Employer / company <input name="employer" type="text" placeholder="Optional"></label>
+        <label>Position / job title <input name="position" type="text" placeholder="Optional"></label>
+
+        <h2>Pay</h2>
+        <div class="grid2">
+          <label>Hourly rate <input name="rate" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Currency symbol <input name="currency" type="text" maxlength="4"></label>
+        </div>
+        <div class="grid2">
+          <label>Overtime after (hrs / week) <input name="otWeekly" type="number" min="0" step="0.25"></label>
+          <label>Overtime multiplier <input name="otMult" type="number" min="1" step="0.05"></label>
+        </div>
+        <p class="hint">Set overtime hours to 0 to turn overtime off.</p>
+
+        <h2>Display &amp; rules</h2>
+        <div class="grid2">
+          <label>Week starts on
+            <select name="weekStart">
+              <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option>
+              <option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </label>
+          <label>Round punches to
+            <select name="rounding">
+              <option value="0">No rounding</option><option value="5">Nearest 5 min</option>
+              <option value="6">Nearest 6 min (1/10 hr)</option><option value="15">Nearest 15 min</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid2">
+          <label>Show hours as
+            <select name="hoursFmt"><option value="hm">7:30 (hours:minutes)</option><option value="dec">7.50 (decimal)</option></select>
+          </label>
+          <label>Time format
+            <select name="clock24"><option value="false">12-hour (2:30 PM)</option><option value="true">24-hour (14:30)</option></select>
+          </label>
+        </div>
+        <p class="hint" id="savedHint">Changes save automatically.</p>
+      </form>
+
+      <div class="card">
+        <h2>Backup &amp; restore</h2>
+        <p class="hint">Everything is stored only on this device. Download a backup now and then so you never lose your hours.</p>
+        <p class="hint" id="lastBackup"></p>
+        <div class="row-actions">
+          <button class="btn primary" id="backupBtn">Download backup</button>
+          <label class="btn file-btn">Restore backup<input type="file" id="restoreInput" accept=".json,application/json" hidden></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Danger zone</h2>
+        <button class="btn danger" id="wipeBtn">Erase all data</button>
+      </div>
+      <p class="hint center" id="storageInfo"></p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-view="clock" class="on"><span class="ti">⏱</span>Clock</button>
+    <button data-view="sheet"><span class="ti">🗓</span>Timesheet</button>
+    <button data-view="reports"><span class="ti">📄</span>Reports</button>
+    <button data-view="settings"><span class="ti">⚙</span>Settings</button>
+  </nav>
+
+  <!-- Edit dialog -->
+  <dialog id="editDlg">
+    <form class="form" id="editForm" novalidate>
+      <h2 id="editTitle">Edit entry</h2>
+      <div class="fld">
+        <label for="f-quick">Say or type it all at once</label>
+        <div class="with-mic">
+          <input id="f-quick" name="quick" type="text" autocomplete="off" placeholder="yesterday 7 to 3:30, 30 min lunch, note tile job">
+          <button type="button" class="mic" data-for="f-quick" aria-label="Dictate entry">🎤</button>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="fld">
+          <label for="f-date">Date</label>
+          <div class="with-mic"><input id="f-date" name="date" type="text" autocomplete="off" placeholder="today, mon, 11/20…"><button type="button" class="mic" data-for="f-date" aria-label="Dictate date">🎤</button></div>
+        </div>
+        <div class="fld">
+          <label for="f-break">Unpaid break</label>
+          <div class="with-mic"><input id="f-break" name="breakMin" type="text" autocomplete="off" placeholder="30, 1:00, half hour…"><button type="button" class="mic" data-for="f-break" aria-label="Dictate break">🎤</button></div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="fld">
+          <label for="f-in">Clock in</label>
+          <div class="with-mic"><input id="f-in" name="start" type="text" autocomplete="off" placeholder="7, 730, 7:30a…"><button type="button" class="mic" data-for="f-in" aria-label="Dictate clock-in time">🎤</button></div>
+        </div>
+        <div class="fld">
+          <label for="f-out">Clock out</label>
+          <div class="with-mic"><input id="f-out" name="end" type="text" autocomplete="off" placeholder="blank = still on"><button type="button" class="mic" data-for="f-out" aria-label="Dictate clock-out time">🎤</button></div>
+        </div>
+      </div>
+      <div class="fld">
+        <label for="f-note">Notes</label>
+        <div class="with-mic"><textarea id="f-note" name="note" rows="3" maxlength="1000" placeholder="Job, location, what you worked on…"></textarea><button type="button" class="mic" data-for="f-note" data-mode="append" aria-label="Dictate note">🎤</button></div>
+      </div>
+      <p class="preview" id="editPreview"></p>
+      <p class="hint" id="kbdHint" hidden>Tip: tap the microphone on your keyboard to dictate into any box.</p>
+      <p class="error" id="editErr"></p>
+      <div class="row-actions">
+        <button type="button" class="btn danger" id="editDelete">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="editCancel">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/jspdf.umd.min.js" defer></script>
+  <script src="vendor/jspdf.plugin.autotable.min.js" defer></script>
+  <script src="js/parse.js" defer></script>
+  <script src="js/app.js" defer></script>
+</body>
+</html>
