@@ -12,7 +12,6 @@
     weekStart: 0, rounding: 0, hoursFmt: 'hm', clock24: false,
     benefitsOn: true, benefitsHours: 40, benefitsCost: 0, benefitsPer: 'month',
   };
-  let viewer = null; // set when showing a shared, read-only link
   let state = load();
 
   function load() {
@@ -25,7 +24,6 @@
     return s;
   }
   function save() {
-    if (viewer) return;
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (e) { toast('Could not save — storage is full or blocked.'); }
   }
@@ -197,7 +195,7 @@
     currentView = v;
     document.querySelectorAll('.view').forEach((el) => el.classList.toggle('active', el.id === 'view-' + v));
     document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
-    if (!viewer) { try { sessionStorage.setItem('tc.view', v); } catch (e) { /* ignore */ } }
+    try { sessionStorage.setItem('tc.view', v); } catch (e) { /* ignore */ }
     render();
     window.scrollTo(0, 0);
   }
@@ -462,7 +460,7 @@
       const rows = sum.rows.filter((r) => r.e.start >= d0 && r.e.start < d1);
       const dayTotal = rows.reduce((a, r) => a + r.dur, 0);
       const cls = ['day', dayKey(d0) === todayKey ? 'today' : '', rows.length ? '' : 'empty-day'].join(' ');
-      html += `<div class="${cls}"><div class="day-head"><span>${esc(fmtDowLong(d0))}<span class="dt">${esc(fmtDate(d0, { month: 'short', day: 'numeric' }))}</span></span><span>${rows.length ? fmtH(dayTotal) : '—'}<button class="add-day photo-day owner-only" data-photo-day="${dayKey(d0)}" aria-label="Add photo to this day">📷</button><button class="add-day owner-only" data-day="${d0}" aria-label="Add entry for this day">＋</button></span></div>`;
+      html += `<div class="${cls}"><div class="day-head"><span>${esc(fmtDowLong(d0))}<span class="dt">${esc(fmtDate(d0, { month: 'short', day: 'numeric' }))}</span></span><span>${rows.length ? fmtH(dayTotal) : '—'}<button class="add-day photo-day" data-photo-day="${dayKey(d0)}" aria-label="Add photo to this day">📷</button><button class="add-day" data-day="${d0}" aria-label="Add entry for this day">＋</button></span></div>`;
       for (const r of rows) {
         const e = r.e;
         const meta = [];
@@ -470,7 +468,7 @@
         if (r.ot > 0) meta.push(`${fmtH(r.ot)} overtime`);
         if (e.end != null && startOfDay(e.end) !== startOfDay(e.start)) meta.push(`ends ${fmtDate(e.end, { weekday: 'short' })}`);
         if (e.note) meta.push(esc(e.note));
-        html += `<button class="entry" data-id="${e.id}"${viewer ? ' disabled' : ''}><span class="times">${esc(fmtTime(e.start))} → ${e.end == null ? '<span class="live">on the clock</span>' : esc(fmtTime(e.end))}</span><span class="dur">${fmtH(r.dur)}</span>${meta.length ? `<span class="meta">${meta.join(' · ')}</span>` : ''}</button>`;
+        html += `<button class="entry" data-id="${e.id}"><span class="times">${esc(fmtTime(e.start))} → ${e.end == null ? '<span class="live">on the clock</span>' : esc(fmtTime(e.end))}</span><span class="dur">${fmtH(r.dur)}</span>${meta.length ? `<span class="meta">${meta.join(' · ')}</span>` : ''}</button>`;
       }
       html += photoStrip(dayKey(d0)) + '</div>';
     }
@@ -490,7 +488,6 @@
   const inputDate = (t) => fmtDate(t, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   function openEdit(id, day, quick) {
-    if (viewer) return;
     const dlg = $('editDlg');
     $('editErr').textContent = '';
     $('kbdHint').hidden = !!SR;
@@ -669,6 +666,10 @@
     if (from === last) return fmtDate(from, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
     return `${fmtDate(from)} – ${fmtDate(last)}`;
   }
+  function repLabel(from, to) {
+    const typeName = { week: 'Weekly', biweek: 'Bi-weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly', custom: 'Custom' }[repType];
+    return `${typeName} report · ${rangeLabel(from, to)}`;
+  }
   function breakdownMode(from, to) {
     const days = Math.round((to - from) / DAY);
     if (repType === 'week' || repType === 'biweek') return 'day';
@@ -797,7 +798,6 @@
   }
   let photoTargetDay = null;
   function pickPhotos(k) {
-    if (viewer) return;
     photoTargetDay = k;
     $('photoInput').click();
   }
@@ -823,13 +823,12 @@
     $('photoBig').src = photoUrl(p);
     $('photoWhen').textContent = fmtDate(fromLocalInput(p.day), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     $('photoCaption').value = p.caption || '';
-    $('photoCaptionRO').textContent = p.caption || '';
     $('photoDlg').showModal();
   }
   async function closePhoto() {
     stopListening();
     const p = viewingPhoto;
-    if (p && !viewer) {
+    if (p) {
       const cap = $('photoCaption').value.trim();
       if (cap !== (p.caption || '')) { p.caption = cap; try { await idbReq('readwrite', (st) => st.put(p)); } catch (e) { toast('Could not save caption.'); } }
     }
@@ -850,115 +849,6 @@
   }
   const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
   async function dataURLToBlob(u) { return (await fetch(u)).blob(); }
-
-  // ---------- Share links (view-only snapshot packed into the URL) ----------
-  function b64urlEncode(bytes) {
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-  function b64urlDecode(str) {
-    const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
-  async function pack(json) {
-    const bytes = new TextEncoder().encode(json);
-    if (window.CompressionStream) {
-      try {
-        const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
-        return 'z' + b64urlEncode(new Uint8Array(buf));
-      } catch (e) { /* fall through */ }
-    }
-    return 'j' + b64urlEncode(bytes);
-  }
-  async function unpack(code) {
-    const bytes = b64urlDecode(code.slice(1));
-    if (code[0] === 'z') {
-      if (!window.DecompressionStream) throw new Error('This browser is too old to open this link.');
-      const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
-      return new TextDecoder().decode(buf);
-    }
-    return new TextDecoder().decode(bytes);
-  }
-  async function makeShareLink(from, to, label, opts) {
-    const now = Date.now();
-    // include whole weeks so weekly overtime and benefits match what you see
-    const wf = startOfWeek(from), wt = addDays(startOfWeek(addDays(to, -1)), 7);
-    const e = sorted().filter((x) => x.start >= wf && x.start < wt).map((x) => {
-      const end = x.end == null ? now : x.end;
-      return [Math.round(x.start / 1000), Math.round((end - x.start) / 1000), Math.round(breakOf(x, now) / 1000), opts.notes ? x.note || '' : '', x.end == null ? 1 : 0];
-    });
-    const st = Object.assign({}, S());
-    if (!opts.pay) { st.rate = 0; st.benefitsCost = 0; }
-    const json = JSON.stringify({ v: 1, s: st, f: from, t: to, l: label, c: now, e });
-    return location.origin + location.pathname + '#view=' + (await pack(json));
-  }
-  let shareCtx = null;
-  async function openShare(from, to, label) {
-    shareCtx = { from, to, label };
-    $('shareWhat').textContent = `${label} (${fmtDate(from)} – ${fmtDate(addDays(to, -1))})`;
-    $('shareDlg').showModal();
-    await refreshShare();
-  }
-  async function refreshShare() {
-    if (!shareCtx) return;
-    $('shareUrl').value = 'Creating link…';
-    const url = await makeShareLink(shareCtx.from, shareCtx.to, shareCtx.label, { pay: $('shPay').checked, notes: $('shNotes').checked });
-    shareCtx.url = url;
-    $('shareUrl').value = url;
-    const local = !/^https:$/.test(location.protocol) || /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(location.hostname);
-    $('shareInfo').textContent = (local ? '⚠ This copy of the app isn’t running from a public web address, so the link will only open once the app is hosted (see README). ' : '') +
-      `Link is ${url.length.toLocaleString()} characters.` + (url.length > 30000 ? ' That’s long; a shorter period makes a shorter link.' : '');
-  }
-  async function sendShare() {
-    if (!shareCtx || !shareCtx.url) return;
-    const text = `${S().name ? S().name + '’s' : 'My'} timesheet: ${shareCtx.label}`;
-    if (navigator.share) {
-      try { await navigator.share({ title: 'Timesheet', text, url: shareCtx.url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
-    }
-    copyShare();
-  }
-  async function copyShare() {
-    if (!shareCtx || !shareCtx.url) return;
-    try { await navigator.clipboard.writeText(shareCtx.url); toast('Link copied — paste it in a text or email'); }
-    catch (e) { const t = $('shareUrl'); t.focus(); t.select(); try { document.execCommand('copy'); toast('Link copied'); } catch (e2) { toast('Select the link and copy it'); } }
-  }
-
-  async function startViewer(code) {
-    document.body.classList.add('viewer');
-    const banner = $('viewerBanner');
-    banner.hidden = false;
-    let p;
-    try { p = JSON.parse(await unpack(code)); if (!p || !Array.isArray(p.e)) throw new Error('bad'); }
-    catch (e) {
-      viewer = { from: 0, to: 0 };
-      state = { entries: [], settings: Object.assign({}, DEFAULT_SETTINGS), meta: {} };
-      banner.innerHTML = `<b>This shared link is damaged or incomplete.</b>Ask for a new link. ${e && e.message && /old/.test(e.message) ? esc(e.message) : ''}`;
-      showView('sheet');
-      return;
-    }
-    viewer = { from: p.f, to: p.t, label: p.l, created: p.c };
-    state = {
-      settings: Object.assign({}, DEFAULT_SETTINGS, p.s || {}),
-      meta: {},
-      entries: p.e.map(([st, d, b, n, open]) => normEntry({
-        id: uid(), start: st * 1000, end: (st + d) * 1000, breakMs: b * 1000,
-        note: (n || '') + (open ? `${n ? ' ' : ''}(still on the clock when shared)` : ''),
-      })),
-    };
-    const who = state.settings.name ? esc(state.settings.name) + '’s timesheet' : 'Shared timesheet';
-    banner.innerHTML = `<b>${who} · ${esc(p.l || '')}</b>View only · snapshot from ${esc(new Date(p.c).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))} · <a href="${esc(location.pathname)}" id="exitViewer">open my own time clock</a>`;
-    $('exitViewer').addEventListener('click', (ev) => { ev.preventDefault(); location.href = location.pathname; });
-    document.title = (state.settings.name ? state.settings.name + ' · ' : '') + 'Timesheet';
-    if (p.t - p.f <= 8 * DAY) { sheetWeek = startOfWeek(p.f); showView('sheet'); }
-    else {
-      repType = 'custom';
-      $('repFrom').value = dayKey(p.f); $('repTo').value = dayKey(addDays(p.t, -1));
-      showView('reports');
-    }
-  }
 
   // ---------- PDF ----------
   function fileStamp(from, to) { return from === addDays(to, -1) ? dayKey(from) : `${dayKey(from)}_to_${dayKey(addDays(to, -1))}`; }
@@ -1154,8 +1044,9 @@
     return doc;
   }
 
-  async function exportPdf(from, to, label, opts) {
-    if (opts.photos && !viewer) {
+  /** Build the PDF for a period and return { blob, name } (null if it failed). */
+  async function makePdf(from, to, label, opts) {
+    if (opts.photos) {
       const a = dayKey(from), b = dayKey(addDays(to, -1));
       const ps = PH.list.filter((p) => p.day >= a && p.day <= b).sort((x, y) => (x.day === y.day ? x.created - y.created : x.day < y.day ? -1 : 1));
       if (ps.length) {
@@ -1164,9 +1055,32 @@
       }
     }
     const doc = buildPdf(from, to, label, opts);
-    if (!doc) return;
-    const blob = doc.output('blob');
-    saveFile(blob, `Timesheet_${fileStamp(from, to)}.pdf`, 'application/pdf');
+    if (!doc) return null;
+    return { blob: doc.output('blob'), name: `Timesheet_${fileStamp(from, to)}.pdf` };
+  }
+  async function exportPdf(from, to, label, opts) {
+    const r = await makePdf(from, to, label, opts);
+    if (r) saveFile(r.blob, r.name, 'application/pdf');
+  }
+  /** Build the PDF and hand it to the phone's share sheet (Messages, Mail, etc.). */
+  async function sharePdf(from, to, label, opts) {
+    const r = await makePdf(from, to, label, opts);
+    if (!r) return;
+    const text = `${S().name ? S().name + '’s timesheet' : 'Timesheet'}: ${label}`;
+    shareFile(r.blob, r.name, 'application/pdf', text);
+  }
+  async function shareFile(blob, name, type, text) {
+    const file = new File([blob], name, { type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name, text }); return; }
+      catch (e) {
+        if (e && e.name === 'AbortError') return;
+        // Building the PDF took long enough that the browser wants a fresh tap.
+        if (e && e.name === 'NotAllowedError') { askAgain(() => shareFile(blob, name, type, text), name); return; }
+      }
+    }
+    saveFile(blob, name, type);
+    toast('Sharing isn’t available in this browser, so the PDF was downloaded instead.');
   }
 
   function exportCsv(from, to) {
@@ -1190,7 +1104,7 @@
         if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
       } catch (e) {
         if (e && e.name === 'AbortError') return;
-        if (e && e.name === 'NotAllowedError') { askToSave(blob, name, type); return; }
+        if (e && e.name === 'NotAllowedError') { askAgain(() => saveFile(blob, name, type), name); return; }
       }
     }
     const url = URL.createObjectURL(blob);
@@ -1201,9 +1115,9 @@
     toast(`Saved ${name}`);
   }
 
-  let pendingSave = null;
-  function askToSave(blob, name, type) {
-    pendingSave = { blob, name, type };
+  let pendingAction = null;
+  function askAgain(fn, name) {
+    pendingAction = fn;
     $('readyName').textContent = name;
     $('readyDlg').showModal();
   }
@@ -1319,15 +1233,16 @@
     $('photoDelete').addEventListener('click', deletePhoto);
     $('photoDlg').addEventListener('cancel', (e) => { e.preventDefault(); closePhoto(); });
     // sharing
-    $('sheetShareBtn').addEventListener('click', () => openShare(sheetWeek, addDays(sheetWeek, 7), `Week of ${fmtDate(sheetWeek, { month: 'long', day: 'numeric', year: 'numeric' })}`));
-    $('repShareBtn').addEventListener('click', () => { const [f, t] = repRange(); openShare(f, t, rangeLabel(f, t)); });
-    $('shPay').addEventListener('change', refreshShare);
-    $('shNotes').addEventListener('change', refreshShare);
-    $('shareSend').addEventListener('click', sendShare);
-    $('shareCopy').addEventListener('click', copyShare);
-    $('shareClose').addEventListener('click', () => { shareCtx = null; $('shareDlg').close(); });
-    $('readySave').addEventListener('click', () => { $('readyDlg').close(); const p = pendingSave; pendingSave = null; if (p) saveFile(p.blob, p.name, p.type); });
-    $('readyCancel').addEventListener('click', () => { pendingSave = null; $('readyDlg').close(); });
+    $('sheetShareBtn').addEventListener('click', () => {
+      const from = sheetWeek, to = addDays(sheetWeek, 7);
+      sharePdf(from, to, `Week of ${fmtDate(from, { month: 'long', day: 'numeric', year: 'numeric' })}`, { detail: true, sign: $('optSign').checked, photos: $('optPhotos').checked });
+    });
+    $('repShareBtn').addEventListener('click', () => {
+      const [from, to] = repRange();
+      sharePdf(from, to, repLabel(from, to), { detail: $('optDetail').checked, sign: $('optSign').checked, photos: $('optPhotos').checked });
+    });
+    $('readySave').addEventListener('click', () => { $('readyDlg').close(); const fn = pendingAction; pendingAction = null; if (fn) fn(); });
+    $('readyCancel').addEventListener('click', () => { pendingAction = null; $('readyDlg').close(); });
 
     $('sheetDays').addEventListener('click', (ev) => {
       const ph = ev.target.closest('[data-photo-day]');
@@ -1363,8 +1278,7 @@
     $('repTo').addEventListener('change', renderReports);
     $('repPdfBtn').addEventListener('click', () => {
       const [from, to] = repRange();
-      const typeName = { week: 'Weekly', biweek: 'Bi-weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly', custom: 'Custom' }[repType];
-      exportPdf(from, to, `${typeName} report · ${rangeLabel(from, to)}`, { detail: $('optDetail').checked, sign: $('optSign').checked, photos: $('optPhotos').checked });
+      exportPdf(from, to, repLabel(from, to), { detail: $('optDetail').checked, sign: $('optSign').checked, photos: $('optPhotos').checked });
     });
     $('repCsvBtn').addEventListener('click', () => { const [from, to] = repRange(); exportCsv(from, to); });
 
@@ -1385,8 +1299,8 @@
       if (currentView === 'sheet' && !$('editDlg').open) renderSheet();
       if (currentView === 'reports') renderReports();
     }, 30000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && !viewer) { state = load(); render(); } });
-    window.addEventListener('storage', (e) => { if (e.key === KEY && !viewer) { state = load(); render(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { state = load(); render(); } });
+    window.addEventListener('storage', (e) => { if (e.key === KEY) { state = load(); render(); } });
     window.addEventListener('hashchange', () => location.reload());
 
     // Install prompt (Android / desktop Chrome)
@@ -1408,10 +1322,6 @@
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
-    // Opened from a shared link? Show that snapshot read-only and never touch this device's own data.
-    const m = /^#view=(.+)$/.exec(location.hash);
-    if (m) { startViewer(m[1]); return; }
-
     loadPhotos();
     let v = 'clock';
     try { v = sessionStorage.getItem('tc.view') || 'clock'; } catch (e) { /* ignore */ }
@@ -1419,7 +1329,7 @@
   }
 
   // Expose a tiny hook for tests/debugging
-  window.TimeClock = { get state() { return state; }, summarize, buildPdf, benefitWeeks, makeShareLink, get photos() { return PH.list; } };
+  window.TimeClock = { get state() { return state; }, summarize, buildPdf, benefitWeeks, sharePdf, get photos() { return PH.list; } };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

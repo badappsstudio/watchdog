@@ -1,5 +1,5 @@
 /* Offline service worker: caches the whole app on install and serves it cache-first. */
-const VERSION = 'timeclock-v2';
+const VERSION = 'timeclock-v3';
 const ASSETS = [
   './',
   './index.html',

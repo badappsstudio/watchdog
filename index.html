@@ -16,7 +16,6 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <div class="viewer-banner" id="viewerBanner" hidden></div>
   <header class="topbar">
     <h1>Time Clock</h1>
     <button id="installBtn" class="btn small ghost" hidden>Install app</button>
@@ -87,9 +86,9 @@
       <div id="sheetDays"></div>
 
       <div class="row-actions">
-        <button class="btn owner-only" id="addEntryBtn">+ Add entry</button>
+        <button class="btn" id="addEntryBtn">+ Add entry</button>
         <button class="btn primary" id="sheetPdfBtn">PDF for this week</button>
-        <button class="btn owner-only" id="sheetShareBtn">🔗 Share this week</button>
+        <button class="btn" id="sheetShareBtn">📤 Share this week</button>
       </div>
     </section>
 
@@ -147,11 +146,11 @@
         <h2>Export</h2>
         <label class="check"><input type="checkbox" id="optDetail" checked> Include every punch (detailed list)</label>
         <label class="check"><input type="checkbox" id="optSign"> Include signature lines</label>
-        <label class="check owner-only"><input type="checkbox" id="optPhotos" checked> Include photos</label>
+        <label class="check"><input type="checkbox" id="optPhotos" checked> Include photos</label>
         <div class="row-actions">
           <button class="btn primary" id="repPdfBtn">Download PDF</button>
           <button class="btn" id="repCsvBtn">Download CSV</button>
-          <button class="btn owner-only" id="repShareBtn">🔗 Share link</button>
+          <button class="btn" id="repShareBtn">📤 Share PDF</button>
         </div>
       </div>
     </section>
@@ -236,10 +235,10 @@
   </main>
 
   <nav class="tabbar">
-    <button data-view="clock" class="on owner-only"><span class="ti">⏱</span>Clock</button>
+    <button data-view="clock" class="on"><span class="ti">⏱</span>Clock</button>
     <button data-view="sheet"><span class="ti">🗓</span>Timesheet</button>
     <button data-view="reports"><span class="ti">📄</span>Reports</button>
-    <button data-view="settings" class="owner-only"><span class="ti">⚙</span>Settings</button>
+    <button data-view="settings"><span class="ti">⚙</span>Settings</button>
   </nav>
 
   <!-- Edit dialog -->
@@ -294,13 +293,12 @@
     <div class="form">
       <p class="hint" id="photoWhen"></p>
       <img id="photoBig" alt="">
-      <div class="fld owner-only">
+      <div class="fld">
         <label for="photoCaption">Caption</label>
         <div class="with-mic"><input id="photoCaption" type="text" maxlength="300" placeholder="What's in this photo?"><button type="button" class="mic" data-for="photoCaption" aria-label="Dictate caption">🎤</button></div>
       </div>
-      <p id="photoCaptionRO" class="viewer-only"></p>
       <div class="row-actions">
-        <button type="button" class="btn danger owner-only" id="photoDelete">Delete photo</button>
+        <button type="button" class="btn danger" id="photoDelete">Delete photo</button>
         <span class="spacer"></span>
         <button type="button" class="btn primary" id="photoClose">Done</button>
       </div>
@@ -308,31 +306,12 @@
   </dialog>
   <input type="file" id="photoInput" accept="image/*" multiple hidden>
 
-  <!-- Share dialog -->
-  <dialog id="shareDlg">
-    <div class="form">
-      <h2>Share a view-only link</h2>
-      <p id="shareWhat"></p>
-      <label class="check"><input type="checkbox" id="shPay" checked> Include pay amounts</label>
-      <label class="check"><input type="checkbox" id="shNotes" checked> Include notes</label>
-      <p class="hint">The hours are packed inside the link itself. Nothing is uploaded anywhere. It's a snapshot: send a new link whenever you want him to see updates. Photos don't fit in a link, so send the PDF for those.</p>
-      <textarea id="shareUrl" rows="3" readonly></textarea>
-      <p class="hint" id="shareInfo"></p>
-      <div class="row-actions">
-        <button type="button" class="btn" id="shareCopy">Copy link</button>
-        <button type="button" class="btn primary" id="shareSend">Send…</button>
-        <span class="spacer"></span>
-        <button type="button" class="btn" id="shareClose">Close</button>
-      </div>
-    </div>
-  </dialog>
-
   <!-- Save prompt (when the browser needs another tap to save a file) -->
   <dialog id="readyDlg">
     <div class="form">
-      <h2>Your file is ready</h2>
+      <h2>Your PDF is ready</h2>
       <p id="readyName" class="hint"></p>
-      <div class="row-actions"><span class="spacer"></span><button type="button" class="btn" id="readyCancel">Cancel</button><button type="button" class="btn primary" id="readySave">Save / Share</button></div>
+      <div class="row-actions"><span class="spacer"></span><button type="button" class="btn" id="readyCancel">Cancel</button><button type="button" class="btn primary" id="readySave">Share / Save</button></div>
     </div>
   </dialog>
 

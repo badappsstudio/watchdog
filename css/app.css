@@ -236,11 +236,4 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .photo-dlg img { display: block; width: 100%; max-height: 62vh; object-fit: contain; border-radius: 10px; background: #000; }
 .day-head .photo-day { font-size: 17px; }
 
-/* View-only (shared link) mode */
-.viewer-banner { background: #1e3a8a; color: #fff; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; font-size: 14px; text-align: center; }
-.viewer-banner a { color: #bfdbfe; }
-.viewer-banner b { display: block; font-size: 15px; }
-.viewer .owner-only { display: none !important; }
-body:not(.viewer) .viewer-only { display: none !important; }
-#shareUrl { font-size: 12px; word-break: break-all; }
 .stat .value { font-size: clamp(15px, 4.8vw, 22px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
