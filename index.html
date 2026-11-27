@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <div class="viewer-banner" id="viewerBanner" hidden></div>
   <header class="topbar">
     <h1>Time Clock</h1>
     <button id="installBtn" class="btn small ghost" hidden>Install app</button>
@@ -38,6 +39,7 @@
             <button type="button" class="mic" data-for="shiftNote" data-mode="append" aria-label="Dictate note">🎤</button>
           </div>
         </div>
+        <button id="clockPhotoBtn" class="btn wide">📷 Add photo to today</button>
         <button id="voiceCmdBtn" class="btn wide voice-cmd" hidden>🎤 Voice command</button>
         <p class="hint" id="voiceHint" hidden>Say “clock in”, “clock out at 4:30”, “start break”, “end break”, “note …”, or a whole entry like “yesterday 7 to 3:30 with a 30 minute lunch”.</p>
       </div>
@@ -51,10 +53,15 @@
         <div class="progress"><div class="bar" id="weekBar"></div></div>
         <div class="progress-label" id="weekBarLabel"></div>
       </div>
+      <div class="progress-wrap" id="benWrap" hidden>
+        <div class="progress"><div class="bar ben" id="benBar"></div></div>
+        <div class="progress-label" id="benLabel"></div>
+      </div>
 
       <div class="card">
         <h2>Today's punches</h2>
         <ul class="punch-list" id="todayList"></ul>
+        <div class="photo-strip" id="todayPhotos"></div>
       </div>
     </section>
 
@@ -75,12 +82,14 @@
         <div class="stat"><span class="label">Overtime</span><span class="value" id="sheetOT">0:00</span></div>
       </div>
       <div class="stat-line" id="sheetPay"></div>
+      <div class="stat-line" id="sheetBen"></div>
 
       <div id="sheetDays"></div>
 
       <div class="row-actions">
-        <button class="btn" id="addEntryBtn">+ Add entry</button>
+        <button class="btn owner-only" id="addEntryBtn">+ Add entry</button>
         <button class="btn primary" id="sheetPdfBtn">PDF for this week</button>
+        <button class="btn owner-only" id="sheetShareBtn">🔗 Share this week</button>
       </div>
     </section>
 
@@ -118,6 +127,17 @@
         <div class="stat"><span class="label">Gross pay</span><span class="value" id="repPay">—</span></div>
       </div>
 
+      <div class="card" id="benCard" hidden>
+        <h2>Benefits coverage</h2>
+        <div class="stats">
+          <div class="stat"><span class="label">Avg covered</span><span class="value" id="benAvg">—</span></div>
+          <div class="stat"><span class="label">Employer pays</span><span class="value" id="benEmp">—</span></div>
+          <div class="stat"><span class="label">You pay</span><span class="value" id="benYou">—</span></div>
+        </div>
+        <div class="table-wrap"><table class="tbl" id="benTable"></table></div>
+        <p class="hint" id="benRule"></p>
+      </div>
+
       <div class="card">
         <h2>Breakdown</h2>
         <div class="table-wrap"><table class="tbl" id="repTable"></table></div>
@@ -127,9 +147,11 @@
         <h2>Export</h2>
         <label class="check"><input type="checkbox" id="optDetail" checked> Include every punch (detailed list)</label>
         <label class="check"><input type="checkbox" id="optSign"> Include signature lines</label>
+        <label class="check owner-only"><input type="checkbox" id="optPhotos" checked> Include photos</label>
         <div class="row-actions">
           <button class="btn primary" id="repPdfBtn">Download PDF</button>
           <button class="btn" id="repCsvBtn">Download CSV</button>
+          <button class="btn owner-only" id="repShareBtn">🔗 Share link</button>
         </div>
       </div>
     </section>
@@ -152,6 +174,21 @@
           <label>Overtime multiplier <input name="otMult" type="number" min="1" step="0.05"></label>
         </div>
         <p class="hint">Set overtime hours to 0 to turn overtime off.</p>
+
+        <h2>Benefits deal</h2>
+        <div class="grid2">
+          <label>Track benefits coverage
+            <select name="benefitsOn"><option value="true">Yes</option><option value="false">No</option></select>
+          </label>
+          <label>Fully covered at (hrs / week) <input name="benefitsHours" type="number" min="1" step="0.25"></label>
+        </div>
+        <div class="grid2">
+          <label>Benefits cost (optional) <input name="benefitsCost" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Cost is per
+            <select name="benefitsPer"><option value="month">Month</option><option value="week">Week</option></select>
+          </label>
+        </div>
+        <p class="hint">Coverage is figured week by week: hours worked ÷ full-coverage hours, up to 100%. With 40: 40 h = fully covered, 20 h = half, 30 h = 75%. Add the cost to see the dollar split.</p>
 
         <h2>Display &amp; rules</h2>
         <div class="grid2">
@@ -199,10 +236,10 @@
   </main>
 
   <nav class="tabbar">
-    <button data-view="clock" class="on"><span class="ti">⏱</span>Clock</button>
+    <button data-view="clock" class="on owner-only"><span class="ti">⏱</span>Clock</button>
     <button data-view="sheet"><span class="ti">🗓</span>Timesheet</button>
     <button data-view="reports"><span class="ti">📄</span>Reports</button>
-    <button data-view="settings"><span class="ti">⚙</span>Settings</button>
+    <button data-view="settings" class="owner-only"><span class="ti">⚙</span>Settings</button>
   </nav>
 
   <!-- Edit dialog -->
@@ -250,6 +287,53 @@
         <button type="submit" class="btn primary">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Photo viewer -->
+  <dialog id="photoDlg" class="photo-dlg">
+    <div class="form">
+      <p class="hint" id="photoWhen"></p>
+      <img id="photoBig" alt="">
+      <div class="fld owner-only">
+        <label for="photoCaption">Caption</label>
+        <div class="with-mic"><input id="photoCaption" type="text" maxlength="300" placeholder="What's in this photo?"><button type="button" class="mic" data-for="photoCaption" aria-label="Dictate caption">🎤</button></div>
+      </div>
+      <p id="photoCaptionRO" class="viewer-only"></p>
+      <div class="row-actions">
+        <button type="button" class="btn danger owner-only" id="photoDelete">Delete photo</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn primary" id="photoClose">Done</button>
+      </div>
+    </div>
+  </dialog>
+  <input type="file" id="photoInput" accept="image/*" multiple hidden>
+
+  <!-- Share dialog -->
+  <dialog id="shareDlg">
+    <div class="form">
+      <h2>Share a view-only link</h2>
+      <p id="shareWhat"></p>
+      <label class="check"><input type="checkbox" id="shPay" checked> Include pay amounts</label>
+      <label class="check"><input type="checkbox" id="shNotes" checked> Include notes</label>
+      <p class="hint">The hours are packed inside the link itself. Nothing is uploaded anywhere. It's a snapshot: send a new link whenever you want him to see updates. Photos don't fit in a link, so send the PDF for those.</p>
+      <textarea id="shareUrl" rows="3" readonly></textarea>
+      <p class="hint" id="shareInfo"></p>
+      <div class="row-actions">
+        <button type="button" class="btn" id="shareCopy">Copy link</button>
+        <button type="button" class="btn primary" id="shareSend">Send…</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="shareClose">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Save prompt (when the browser needs another tap to save a file) -->
+  <dialog id="readyDlg">
+    <div class="form">
+      <h2>Your file is ready</h2>
+      <p id="readyName" class="hint"></p>
+      <div class="row-actions"><span class="spacer"></span><button type="button" class="btn" id="readyCancel">Cancel</button><button type="button" class="btn primary" id="readySave">Save / Share</button></div>
+    </div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

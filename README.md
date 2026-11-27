@@ -15,7 +15,13 @@ A private, single-person time clock that runs entirely on your phone or computer
 - **Reports**: week, 2 weeks, month, quarter, year or a custom range, broken down by day, week or month.
 - **PDF export** for any period, with a summary, totals table, every punch and its notes, and optional signature lines. **CSV export** for spreadsheets.
 - **Settings**: name, employer, hourly rate, weekly overtime threshold and multiplier, week start day, punch rounding (5, 6 or 15 min), h:mm or decimal hours, 12 or 24-hour time.
-- **Backup / restore** to a JSON file. Your data lives only on this device, so download a backup now and then.
+- **Benefits deal tracking**: each week, coverage = hours worked ÷ full-coverage hours (40 by default), up to 100%. 40 h = fully covered, 20 h = half, 30 h = 75%. The Clock screen shows a coverage bar and how many hours you still need for full coverage. The Timesheet, Reports and PDFs show coverage week by week. Enter the benefits cost (per month or per week) in Settings to see the dollar split between employer and you. A week that spans two months counts in the month it starts in.
+- **Photos on any day**: tap 📷 on a day in the Timesheet, or **Add photo to today** on the Clock screen. Use the camera or pick from your library. Tap a photo to add a caption (typed or dictated) or delete it. Photos are shrunk to about 1600 px and kept on the device. They're included in PDFs (turn off with "Include photos") and in backups.
+- **View-only link for your boss**: tap **🔗 Share this week** in the Timesheet, or **🔗 Share link** in Reports for any period. Then send it by text or email. When he opens it he sees a read-only Timesheet and Reports for that period, including hours, notes, overtime and benefits coverage, and he can download the PDF. You can choose whether pay amounts and notes are included.
+  - The data is packed inside the link itself. Nothing is uploaded and there's no server or account. That means it's a **snapshot**: send a new link when you want him to see updates.
+  - Photos are too big to fit in a link, so send the PDF when he needs to see them.
+  - The link only works once the app is hosted at a public web address (see below).
+- **Backup / restore** to a JSON file, photos included. Your data lives only on this device, so download a backup now and then.
 
 ## Install it on your phone
 

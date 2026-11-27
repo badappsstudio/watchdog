@@ -10,7 +10,9 @@
     name: '', employer: '', position: '',
     rate: 0, currency: '$', otWeekly: 40, otMult: 1.5,
     weekStart: 0, rounding: 0, hoursFmt: 'hm', clock24: false,
+    benefitsOn: true, benefitsHours: 40, benefitsCost: 0, benefitsPer: 'month',
   };
+  let viewer = null; // set when showing a shared, read-only link
   let state = load();
 
   function load() {
@@ -23,6 +25,7 @@
     return s;
   }
   function save() {
+    if (viewer) return;
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (e) { toast('Could not save — storage is full or blocked.'); }
   }
@@ -137,6 +140,46 @@
     return { from, to, rows, total, ot, reg, brk, pay, days: days.size };
   }
 
+  /**
+   * Benefits deal: each week, coverage = hours worked / full-coverage hours (max 100%).
+   * A period includes the weeks that start inside it. Returns null when tracking is off.
+   */
+  function benefitsOn() { return S().benefitsOn !== false && Number(S().benefitsHours) > 0; }
+  function weeklyBenefitCost() {
+    const c = Number(S().benefitsCost) || 0;
+    return S().benefitsPer === 'week' ? c : (c * 12) / 52;
+  }
+  function benefitWeek(w, now) {
+    const thr = Number(S().benefitsHours) * HOUR;
+    const hrs = summarize(w, addDays(w, 7), now).total;
+    const pct = Math.min(1, hrs / thr);
+    const wc = weeklyBenefitCost();
+    return { w, hrs, pct, future: w > now, employer: wc * pct, you: wc * (1 - pct), left: Math.max(0, thr - hrs) };
+  }
+  function benefitWeeks(from, to, now) {
+    if (!benefitsOn()) return null;
+    now = now || Date.now();
+    let weeks = [];
+    for (let w = startOfWeek(from); w < to; w = addDays(w, 7)) if (w >= from) weeks.push(w);
+    if (!weeks.length) weeks = [startOfWeek(from)];
+    const rows = weeks.map((w) => benefitWeek(w, now));
+    const past = rows.filter((r) => !r.future);
+    const hasCost = (Number(S().benefitsCost) || 0) > 0;
+    return {
+      rows, hasCost,
+      avg: past.length ? past.reduce((a, r) => a + r.pct, 0) / past.length : 0,
+      employer: past.reduce((a, r) => a + r.employer, 0),
+      you: past.reduce((a, r) => a + r.you, 0),
+      full: past.filter((r) => r.pct >= 1).length,
+      counted: past.length,
+    };
+  }
+  const pctStr = (x) => `${Math.round(x * 100)}%`;
+  function benefitRuleText() {
+    const h = S().benefitsHours;
+    return `Benefits are figured per week: hours worked ÷ ${h} h, up to 100% (${h} h = fully covered, ${h / 2} h = half). A week that spans two periods counts in the period it starts in.`;
+  }
+
   // ---------- UI helpers ----------
   const $ = (id) => document.getElementById(id);
   let toastTimer;
@@ -154,7 +197,7 @@
     currentView = v;
     document.querySelectorAll('.view').forEach((el) => el.classList.toggle('active', el.id === 'view-' + v));
     document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
-    try { sessionStorage.setItem('tc.view', v); } catch (e) { /* ignore */ }
+    if (!viewer) { try { sessionStorage.setItem('tc.view', v); } catch (e) { /* ignore */ } }
     render();
     window.scrollTo(0, 0);
   }
@@ -220,6 +263,18 @@
       bar.style.width = '0';
       $('weekBarLabel').textContent = '';
     }
+
+    const bw = $('benWrap');
+    bw.hidden = !benefitsOn();
+    if (benefitsOn()) {
+      const b = benefitWeek(wk0, now);
+      $('benBar').style.width = (b.pct * 100) + '%';
+      $('benBar').classList.toggle('full', b.pct >= 1);
+      $('benLabel').textContent = b.pct >= 1
+        ? 'Benefits fully covered this week ✓'
+        : `Benefits ${pctStr(b.pct)} covered · ${fmtH(b.left)} more for full coverage`;
+    }
+    $('todayPhotos').innerHTML = photoStrip(dayKey(now));
 
     const ul = $('todayList');
     if (!today.rows.length) {
@@ -392,6 +447,12 @@
     $('sheetTotal').textContent = fmtH(sum.total);
     $('sheetReg').textContent = fmtH(sum.reg);
     $('sheetOT').textContent = fmtH(sum.ot);
+    const ben = benefitWeeks(from, to, now);
+    if (ben) {
+      const b = ben.rows[0];
+      $('sheetBen').textContent = `Benefits ${pctStr(b.pct)} covered` + (b.pct < 1 ? ` (${fmtH(b.hrs)} of ${S().benefitsHours} h)` : ' ✓') +
+        (ben.hasCost ? ` · employer ${fmtMoney(b.employer)}, you ${fmtMoney(b.you)}` : '');
+    } else $('sheetBen').textContent = '';
     $('sheetPay').textContent = sum.pay != null ? `Gross pay ${fmtMoney(sum.pay)}  ·  ${sum.days} day${sum.days === 1 ? '' : 's'} worked` : `${sum.days} day${sum.days === 1 ? '' : 's'} worked`;
 
     const todayKey = dayKey(now);
@@ -401,7 +462,7 @@
       const rows = sum.rows.filter((r) => r.e.start >= d0 && r.e.start < d1);
       const dayTotal = rows.reduce((a, r) => a + r.dur, 0);
       const cls = ['day', dayKey(d0) === todayKey ? 'today' : '', rows.length ? '' : 'empty-day'].join(' ');
-      html += `<div class="${cls}"><div class="day-head"><span>${esc(fmtDowLong(d0))}<span class="dt">${esc(fmtDate(d0, { month: 'short', day: 'numeric' }))}</span></span><span>${rows.length ? fmtH(dayTotal) : '—'}<button class="add-day" data-day="${d0}" aria-label="Add entry for this day">＋</button></span></div>`;
+      html += `<div class="${cls}"><div class="day-head"><span>${esc(fmtDowLong(d0))}<span class="dt">${esc(fmtDate(d0, { month: 'short', day: 'numeric' }))}</span></span><span>${rows.length ? fmtH(dayTotal) : '—'}<button class="add-day photo-day owner-only" data-photo-day="${dayKey(d0)}" aria-label="Add photo to this day">📷</button><button class="add-day owner-only" data-day="${d0}" aria-label="Add entry for this day">＋</button></span></div>`;
       for (const r of rows) {
         const e = r.e;
         const meta = [];
@@ -409,9 +470,9 @@
         if (r.ot > 0) meta.push(`${fmtH(r.ot)} overtime`);
         if (e.end != null && startOfDay(e.end) !== startOfDay(e.start)) meta.push(`ends ${fmtDate(e.end, { weekday: 'short' })}`);
         if (e.note) meta.push(esc(e.note));
-        html += `<button class="entry" data-id="${e.id}"><span class="times">${esc(fmtTime(e.start))} → ${e.end == null ? '<span class="live">on the clock</span>' : esc(fmtTime(e.end))}</span><span class="dur">${fmtH(r.dur)}</span>${meta.length ? `<span class="meta">${meta.join(' · ')}</span>` : ''}</button>`;
+        html += `<button class="entry" data-id="${e.id}"${viewer ? ' disabled' : ''}><span class="times">${esc(fmtTime(e.start))} → ${e.end == null ? '<span class="live">on the clock</span>' : esc(fmtTime(e.end))}</span><span class="dur">${fmtH(r.dur)}</span>${meta.length ? `<span class="meta">${meta.join(' · ')}</span>` : ''}</button>`;
       }
-      html += '</div>';
+      html += photoStrip(dayKey(d0)) + '</div>';
     }
     $('sheetDays').innerHTML = html;
   }
@@ -429,6 +490,7 @@
   const inputDate = (t) => fmtDate(t, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   function openEdit(id, day, quick) {
+    if (viewer) return;
     const dlg = $('editDlg');
     $('editErr').textContent = '';
     $('kbdHint').hidden = !!SR;
@@ -657,7 +719,245 @@
     const rows = out.filter((b) => mode === 'day' || b.sum.rows.length || repType !== 'custom').map((b) =>
       `<tr><td>${esc(b.label)}</td><td>${mode === 'day' ? b.sum.rows.length || '' : b.sum.days || ''}</td><td>${b.sum.total ? fmtH(b.sum.total) : '—'}</td><td>${b.sum.ot ? fmtH(b.sum.ot) : ''}</td>${showPay ? `<td>${b.sum.pay ? fmtMoney(b.sum.pay) : ''}</td>` : ''}</tr>`).join('');
     const foot = `<tfoot><tr><td>Total</td><td>${mode === 'day' ? sum.rows.length : sum.days}</td><td>${fmtH(sum.total)}</td><td>${fmtH(sum.ot)}</td>${showPay ? `<td>${fmtMoney(sum.pay)}</td>` : ''}</tr></tfoot>`;
+    renderBenefitsCard(from, to, now);
     $('repTable').innerHTML = head + '<tbody>' + (rows || `<tr><td class="none" colspan="5">No entries</td></tr>`) + '</tbody>' + foot;
+  }
+
+  function renderBenefitsCard(from, to, now) {
+    const ben = benefitWeeks(from, to, now);
+    $('benCard').hidden = !ben;
+    if (!ben) return;
+    $('benAvg').textContent = ben.counted ? pctStr(ben.avg) : '—';
+    $('benEmp').textContent = ben.hasCost ? fmtMoney(ben.employer) : '—';
+    $('benYou').textContent = ben.hasCost ? fmtMoney(ben.you) : '—';
+    const head = `<thead><tr><th>Week</th><th>Hours</th><th>Covered</th>${ben.hasCost ? '<th>Employer</th><th>You</th>' : ''}</tr></thead>`;
+    const body = ben.rows.map((r) => `<tr><td>Week of ${esc(fmtDate(r.w, { month: 'short', day: 'numeric' }))}</td><td>${r.future ? '' : fmtH(r.hrs)}</td><td>${r.future ? 'upcoming' : pctStr(r.pct)}</td>${ben.hasCost ? `<td>${r.future ? '' : fmtMoney(r.employer)}</td><td>${r.future ? '' : fmtMoney(r.you)}</td>` : ''}</tr>`).join('');
+    const foot = `<tfoot><tr><td>${ben.full} of ${ben.counted} weeks full</td><td></td><td>${ben.counted ? pctStr(ben.avg) + ' avg' : ''}</td>${ben.hasCost ? `<td>${fmtMoney(ben.employer)}</td><td>${fmtMoney(ben.you)}</td>` : ''}</tr></tfoot>`;
+    $('benTable').innerHTML = head + '<tbody>' + body + '</tbody>' + foot;
+    $('benRule').textContent = benefitRuleText();
+  }
+
+  // ---------- Photos (stored in IndexedDB on this device) ----------
+  const PH = { db: null, list: [], urls: new Map() };
+  function openPhotoDb() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('timeclock-photos', 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore('photos', { keyPath: 'id' }).createIndex('day', 'day'); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  function idbReq(mode, fn) {
+    return new Promise((res, rej) => {
+      const t = PH.db.transaction('photos', mode);
+      const out = fn(t.objectStore('photos'));
+      t.oncomplete = () => res(out && out.result);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
+    });
+  }
+  async function loadPhotos() {
+    try {
+      PH.db = await openPhotoDb();
+      PH.list = (await idbReq('readonly', (st) => st.getAll())) || [];
+    } catch (e) { PH.list = []; }
+    render();
+  }
+  const photosFor = (k) => PH.list.filter((p) => p.day === k).sort((a, b) => a.created - b.created);
+  function photoUrl(p) {
+    if (!PH.urls.has(p.id)) PH.urls.set(p.id, URL.createObjectURL(p.blob));
+    return PH.urls.get(p.id);
+  }
+  function photoStrip(k) {
+    const ps = photosFor(k);
+    if (!ps.length) return '';
+    return `<div class="photo-strip">${ps.map((p) => `<button class="thumb" data-photo="${p.id}" aria-label="Open photo"><img src="${photoUrl(p)}" alt="${esc(p.caption || 'Photo')}" loading="lazy"></button>`).join('')}</div>`;
+  }
+  function loadImageEl(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = () => rej(new Error('decode'));
+      img.src = url;
+    });
+  }
+  async function resizeImage(file) {
+    let src;
+    try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { src = await loadImageEl(file); }
+    const w0 = src.width || src.naturalWidth, h0 = src.height || src.naturalHeight;
+    const k = Math.min(1, 1600 / Math.max(w0, h0));
+    const w = Math.round(w0 * k), h = Math.round(h0 * k);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('encode');
+    return { blob, w, h };
+  }
+  let photoTargetDay = null;
+  function pickPhotos(k) {
+    if (viewer) return;
+    photoTargetDay = k;
+    $('photoInput').click();
+  }
+  async function addPhotos(files, k) {
+    if (!PH.db) { toast('Photo storage is not available in this browser.'); return; }
+    let n = 0;
+    for (const f of files) {
+      try {
+        const { blob, w, h } = await resizeImage(f);
+        const rec = { id: uid(), day: k, blob, w, h, caption: '', created: Date.now() };
+        await idbReq('readwrite', (st) => st.put(rec));
+        PH.list.push(rec); n++;
+      } catch (e) { toast(`Couldn’t read ${f.name || 'that photo'}.`); }
+    }
+    if (n) toast(`${n} photo${n === 1 ? '' : 's'} added to ${fmtDate(fromLocalInput(k), { weekday: 'short', month: 'short', day: 'numeric' })}`);
+    render();
+  }
+  let viewingPhoto = null;
+  function openPhoto(id) {
+    const p = PH.list.find((x) => x.id === id);
+    if (!p) return;
+    viewingPhoto = p;
+    $('photoBig').src = photoUrl(p);
+    $('photoWhen').textContent = fmtDate(fromLocalInput(p.day), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    $('photoCaption').value = p.caption || '';
+    $('photoCaptionRO').textContent = p.caption || '';
+    $('photoDlg').showModal();
+  }
+  async function closePhoto() {
+    stopListening();
+    const p = viewingPhoto;
+    if (p && !viewer) {
+      const cap = $('photoCaption').value.trim();
+      if (cap !== (p.caption || '')) { p.caption = cap; try { await idbReq('readwrite', (st) => st.put(p)); } catch (e) { toast('Could not save caption.'); } }
+    }
+    viewingPhoto = null;
+    $('photoDlg').close();
+    render();
+  }
+  async function deletePhoto() {
+    const p = viewingPhoto;
+    if (!p || !confirm('Delete this photo?')) return;
+    try { await idbReq('readwrite', (st) => st.delete(p.id)); } catch (e) { toast('Could not delete photo.'); return; }
+    PH.list = PH.list.filter((x) => x.id !== p.id);
+    if (PH.urls.has(p.id)) { URL.revokeObjectURL(PH.urls.get(p.id)); PH.urls.delete(p.id); }
+    viewingPhoto = null;
+    $('photoDlg').close();
+    toast('Photo deleted');
+    render();
+  }
+  const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+  async function dataURLToBlob(u) { return (await fetch(u)).blob(); }
+
+  // ---------- Share links (view-only snapshot packed into the URL) ----------
+  function b64urlEncode(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function b64urlDecode(str) {
+    const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  async function pack(json) {
+    const bytes = new TextEncoder().encode(json);
+    if (window.CompressionStream) {
+      try {
+        const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
+        return 'z' + b64urlEncode(new Uint8Array(buf));
+      } catch (e) { /* fall through */ }
+    }
+    return 'j' + b64urlEncode(bytes);
+  }
+  async function unpack(code) {
+    const bytes = b64urlDecode(code.slice(1));
+    if (code[0] === 'z') {
+      if (!window.DecompressionStream) throw new Error('This browser is too old to open this link.');
+      const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      return new TextDecoder().decode(buf);
+    }
+    return new TextDecoder().decode(bytes);
+  }
+  async function makeShareLink(from, to, label, opts) {
+    const now = Date.now();
+    // include whole weeks so weekly overtime and benefits match what you see
+    const wf = startOfWeek(from), wt = addDays(startOfWeek(addDays(to, -1)), 7);
+    const e = sorted().filter((x) => x.start >= wf && x.start < wt).map((x) => {
+      const end = x.end == null ? now : x.end;
+      return [Math.round(x.start / 1000), Math.round((end - x.start) / 1000), Math.round(breakOf(x, now) / 1000), opts.notes ? x.note || '' : '', x.end == null ? 1 : 0];
+    });
+    const st = Object.assign({}, S());
+    if (!opts.pay) { st.rate = 0; st.benefitsCost = 0; }
+    const json = JSON.stringify({ v: 1, s: st, f: from, t: to, l: label, c: now, e });
+    return location.origin + location.pathname + '#view=' + (await pack(json));
+  }
+  let shareCtx = null;
+  async function openShare(from, to, label) {
+    shareCtx = { from, to, label };
+    $('shareWhat').textContent = `${label} (${fmtDate(from)} – ${fmtDate(addDays(to, -1))})`;
+    $('shareDlg').showModal();
+    await refreshShare();
+  }
+  async function refreshShare() {
+    if (!shareCtx) return;
+    $('shareUrl').value = 'Creating link…';
+    const url = await makeShareLink(shareCtx.from, shareCtx.to, shareCtx.label, { pay: $('shPay').checked, notes: $('shNotes').checked });
+    shareCtx.url = url;
+    $('shareUrl').value = url;
+    const local = !/^https:$/.test(location.protocol) || /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(location.hostname);
+    $('shareInfo').textContent = (local ? '⚠ This copy of the app isn’t running from a public web address, so the link will only open once the app is hosted (see README). ' : '') +
+      `Link is ${url.length.toLocaleString()} characters.` + (url.length > 30000 ? ' That’s long; a shorter period makes a shorter link.' : '');
+  }
+  async function sendShare() {
+    if (!shareCtx || !shareCtx.url) return;
+    const text = `${S().name ? S().name + '’s' : 'My'} timesheet: ${shareCtx.label}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Timesheet', text, url: shareCtx.url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    copyShare();
+  }
+  async function copyShare() {
+    if (!shareCtx || !shareCtx.url) return;
+    try { await navigator.clipboard.writeText(shareCtx.url); toast('Link copied — paste it in a text or email'); }
+    catch (e) { const t = $('shareUrl'); t.focus(); t.select(); try { document.execCommand('copy'); toast('Link copied'); } catch (e2) { toast('Select the link and copy it'); } }
+  }
+
+  async function startViewer(code) {
+    document.body.classList.add('viewer');
+    const banner = $('viewerBanner');
+    banner.hidden = false;
+    let p;
+    try { p = JSON.parse(await unpack(code)); if (!p || !Array.isArray(p.e)) throw new Error('bad'); }
+    catch (e) {
+      viewer = { from: 0, to: 0 };
+      state = { entries: [], settings: Object.assign({}, DEFAULT_SETTINGS), meta: {} };
+      banner.innerHTML = `<b>This shared link is damaged or incomplete.</b>Ask for a new link. ${e && e.message && /old/.test(e.message) ? esc(e.message) : ''}`;
+      showView('sheet');
+      return;
+    }
+    viewer = { from: p.f, to: p.t, label: p.l, created: p.c };
+    state = {
+      settings: Object.assign({}, DEFAULT_SETTINGS, p.s || {}),
+      meta: {},
+      entries: p.e.map(([st, d, b, n, open]) => normEntry({
+        id: uid(), start: st * 1000, end: (st + d) * 1000, breakMs: b * 1000,
+        note: (n || '') + (open ? `${n ? ' ' : ''}(still on the clock when shared)` : ''),
+      })),
+    };
+    const who = state.settings.name ? esc(state.settings.name) + '’s timesheet' : 'Shared timesheet';
+    banner.innerHTML = `<b>${who} · ${esc(p.l || '')}</b>View only · snapshot from ${esc(new Date(p.c).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))} · <a href="${esc(location.pathname)}" id="exitViewer">open my own time clock</a>`;
+    $('exitViewer').addEventListener('click', (ev) => { ev.preventDefault(); location.href = location.pathname; });
+    document.title = (state.settings.name ? state.settings.name + ' · ' : '') + 'Timesheet';
+    if (p.t - p.f <= 8 * DAY) { sheetWeek = startOfWeek(p.f); showView('sheet'); }
+    else {
+      repType = 'custom';
+      $('repFrom').value = dayKey(p.f); $('repTo').value = dayKey(addDays(p.t, -1));
+      showView('reports');
+    }
   }
 
   // ---------- PDF ----------
@@ -705,6 +1005,8 @@
       ['Overtime hours', `${fmtHM(sum.ot)}  (${fmtDec(sum.ot)} h)`, 'Avg per day worked', sum.days ? fmtHM(sum.total / sum.days) : '0:00'],
       ['Unpaid breaks', `${fmtHM(sum.brk)}  (${fmtDec(sum.brk)} h)`, showPay ? 'Gross pay' : 'Overtime rule', showPay ? fmtMoney(sum.pay) : (Number(s.otWeekly) > 0 ? `After ${s.otWeekly} h/week` : 'None')],
     ];
+    const ben = benefitWeeks(from, to, now);
+    if (ben) summaryBody.push(['Benefits covered', ben.counted ? `${pctStr(ben.avg)} avg (${ben.full} of ${ben.counted} wk full)` : '—', ben.hasCost ? 'Employer / you' : 'Full coverage at', ben.hasCost ? `${fmtMoney(ben.employer)} / ${fmtMoney(ben.you)}` : `${s.benefitsHours} h/week`]);
     if (showPay) summaryBody.push(['Hourly rate', fmtMoney(Number(s.rate)), 'Overtime rate', `${fmtMoney(Number(s.rate) * Number(s.otMult))} (x${s.otMult}, after ${s.otWeekly} h/wk)`]);
     doc.autoTable({
       startY: y, margin: { left: M, right: M }, theme: 'plain', body: summaryBody,
@@ -742,6 +1044,31 @@
     });
     y = doc.lastAutoTable.finalY + 20;
 
+    // Benefits
+    if (ben) {
+      sectionTitle('Benefits coverage');
+      const h = ['Week of', 'Hours', 'Covered'];
+      if (ben.hasCost) h.push('Employer pays', 'You pay');
+      const body = ben.rows.map((r) => {
+        const row = [fmtDate(r.w, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }), r.future ? '' : fmtHM(r.hrs), r.future ? 'upcoming' : pctStr(r.pct)];
+        if (ben.hasCost) row.push(r.future ? '' : fmtMoney(r.employer), r.future ? '' : fmtMoney(r.you));
+        return row;
+      });
+      const foot = [`${ben.full} of ${ben.counted} weeks fully covered`, '', ben.counted ? pctStr(ben.avg) + ' avg' : ''];
+      if (ben.hasCost) foot.push(fmtMoney(ben.employer), fmtMoney(ben.you));
+      doc.autoTable({
+        startY: y, margin: { left: M, right: M }, head: [h], body, foot: [foot],
+        headStyles: headStyle, footStyles: { fillColor: [235, 245, 244], textColor: 20, fontStyle: 'bold' },
+        styles: { fontSize: 9 },
+        didParseCell: (d) => { d.cell.styles.halign = d.column.index === 0 ? 'left' : 'right'; },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+      });
+      y = doc.lastAutoTable.finalY + 12;
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110);
+      const lines = doc.splitTextToSize(benefitRuleText(), W - 2 * M);
+      doc.text(lines, M, y); y += lines.length * 10 + 14;
+    }
+
     // Detail
     if (opts.detail) {
       sectionTitle('Time entries');
@@ -767,6 +1094,38 @@
         alternateRowStyles: { fillColor: [248, 250, 252] },
       });
       y = doc.lastAutoTable.finalY + 20;
+    }
+
+    // Photos
+    if (opts.photoData && opts.photoData.length) {
+      const H = doc.internal.pageSize.getHeight();
+      doc.addPage(); y = 50;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(20); doc.text('Photos', M, y); y += 14;
+      const colW = (W - 2 * M - 14) / 2;
+      const byDay = new Map();
+      for (const ph of opts.photoData) { if (!byDay.has(ph.p.day)) byDay.set(ph.p.day, []); byDay.get(ph.p.day).push(ph); }
+      for (const [k, list] of [...byDay.entries()].sort()) {
+        if (y > H - 120) { doc.addPage(); y = 50; }
+        y += 12;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(20);
+        doc.text(fmtDate(fromLocalInput(k), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }), M, y); y += 8;
+        for (let i = 0; i < list.length; i += 2) {
+          const pair = list.slice(i, i + 2).map((ph) => {
+            let w = colW, h = colW * (ph.p.h / ph.p.w);
+            if (h > 250) { h = 250; w = h * (ph.p.w / ph.p.h); }
+            const cap = ph.p.caption ? doc.splitTextToSize(ph.p.caption, colW) : [];
+            return { ph, w, h, cap };
+          });
+          const rowH = Math.max(...pair.map((q) => q.h + q.cap.length * 10)) + 14;
+          if (y + rowH > H - 40) { doc.addPage(); y = 50; }
+          pair.forEach((q, j) => {
+            const x = M + j * (colW + 14);
+            try { doc.addImage(q.ph.data, 'JPEG', x, y, q.w, q.h, undefined, 'FAST'); } catch (e) { /* skip bad image */ }
+            if (q.cap.length) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(70); doc.text(q.cap, x, y + q.h + 10); }
+          });
+          y += rowH;
+        }
+      }
     }
 
     // Signatures
@@ -795,7 +1154,15 @@
     return doc;
   }
 
-  function exportPdf(from, to, label, opts) {
+  async function exportPdf(from, to, label, opts) {
+    if (opts.photos && !viewer) {
+      const a = dayKey(from), b = dayKey(addDays(to, -1));
+      const ps = PH.list.filter((p) => p.day >= a && p.day <= b).sort((x, y) => (x.day === y.day ? x.created - y.created : x.day < y.day ? -1 : 1));
+      if (ps.length) {
+        toast('Adding photos to PDF…');
+        opts.photoData = await Promise.all(ps.map(async (p) => ({ p, data: await blobToDataURL(p.blob) })));
+      }
+    }
     const doc = buildPdf(from, to, label, opts);
     if (!doc) return;
     const blob = doc.output('blob');
@@ -821,7 +1188,10 @@
       try {
         const file = new File([blob], name, { type });
         if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
-      } catch (e) { if (e && e.name === 'AbortError') return; }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        if (e && e.name === 'NotAllowedError') { askToSave(blob, name, type); return; }
+      }
     }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -829,6 +1199,13 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
     toast(`Saved ${name}`);
+  }
+
+  let pendingSave = null;
+  function askToSave(blob, name, type) {
+    pendingSave = { blob, name, type };
+    $('readyName').textContent = name;
+    $('readyDlg').showModal();
   }
 
   // ---------- Settings ----------
@@ -844,7 +1221,8 @@
       : 'No backup downloaded yet.';
     const n = state.entries.length;
     const first = n ? sorted()[0].start : null;
-    $('storageInfo').textContent = `${n} entr${n === 1 ? 'y' : 'ies'} stored on this device${first ? ' since ' + fmtDate(first) : ''}.`;
+    const np = PH.list.length;
+    $('storageInfo').textContent = `${n} entr${n === 1 ? 'y' : 'ies'}${np ? ` and ${np} photo${np === 1 ? '' : 's'}` : ''} stored on this device${first ? ' since ' + fmtDate(first) : ''}.`;
   }
   function onSettingsInput(ev) {
     const el = ev.target;
@@ -862,8 +1240,11 @@
     onSettingsInput.t = setTimeout(() => { $('savedHint').textContent = 'Changes save automatically.'; }, 1500);
   }
 
-  function backup() {
-    const data = { app: 'timeclock', version: 1, exportedAt: new Date().toISOString(), settings: state.settings, entries: state.entries };
+  async function backup() {
+    let photos = [];
+    try { photos = await Promise.all(PH.list.map(async (p) => ({ id: p.id, day: p.day, w: p.w, h: p.h, caption: p.caption, created: p.created, data: await blobToDataURL(p.blob) }))); }
+    catch (e) { toast('Some photos could not be added to the backup.'); }
+    const data = { app: 'timeclock', version: 2, exportedAt: new Date().toISOString(), settings: state.settings, entries: state.entries, photos };
     state.meta.lastBackup = Date.now();
     save();
     saveFile(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `TimeClock_backup_${dayKey(Date.now())}.json`, 'application/json');
@@ -871,16 +1252,25 @@
   }
   function restore(file) {
     const r = new FileReader();
-    r.onload = () => {
+    r.onload = async () => {
       let data;
       try { data = JSON.parse(r.result); } catch (e) { toast('That file is not a valid backup.'); return; }
       if (!data || !Array.isArray(data.entries)) { toast('That file is not a Time Clock backup.'); return; }
       const entries = data.entries.filter(validEntry).map(normEntry);
-      if (!confirm(`Restore ${entries.length} entries from this backup? This replaces the ${state.entries.length} entries currently on this device.`)) return;
+      const photos = Array.isArray(data.photos) ? data.photos.filter((p) => p && typeof p.data === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.day)) : null;
+      if (!confirm(`Restore ${entries.length} entries${photos ? ` and ${photos.length} photos` : ''} from this backup? This replaces the ${state.entries.length} entries${photos ? ` and ${PH.list.length} photos` : ''} currently on this device.`)) return;
       state.entries = entries;
       state.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
       save();
-      toast(`Restored ${entries.length} entries`);
+      if (photos && PH.db) {
+        try {
+          const recs = await Promise.all(photos.map(async (p) => ({ id: p.id || uid(), day: p.day, w: p.w || 1600, h: p.h || 1200, caption: p.caption || '', created: p.created || Date.now(), blob: await dataURLToBlob(p.data) })));
+          await idbReq('readwrite', (st) => { st.clear(); recs.forEach((r) => st.put(r)); });
+          PH.urls.forEach((u) => URL.revokeObjectURL(u)); PH.urls.clear();
+          PH.list = recs;
+        } catch (e) { toast('Entries restored, but photos could not be restored.'); }
+      }
+      toast(`Restored ${entries.length} entries${photos ? ` and ${photos.length} photos` : ''}`);
       render();
     };
     r.readAsText(file);
@@ -890,6 +1280,8 @@
     if (prompt('Type ERASE to confirm') !== 'ERASE') return;
     state = { entries: [], settings: Object.assign({}, DEFAULT_SETTINGS), meta: {} };
     save();
+    if (PH.db) idbReq('readwrite', (st) => st.clear()).catch(() => {});
+    PH.list = [];
     toast('All data erased');
     render();
   }
@@ -919,7 +1311,27 @@
     $('weekPrev').addEventListener('click', () => { sheetWeek = startOfWeek(addDays(sheetWeek, -7) + 3 * DAY); renderSheet(); });
     $('weekNext').addEventListener('click', () => { sheetWeek = startOfWeek(addDays(sheetWeek, 7) + 3 * DAY); renderSheet(); });
     $('weekToday').addEventListener('click', () => { sheetWeek = startOfWeek(Date.now()); renderSheet(); });
+    // photos
+    document.addEventListener('click', (ev) => { const t = ev.target.closest('.thumb[data-photo]'); if (t) openPhoto(t.dataset.photo); });
+    $('clockPhotoBtn').addEventListener('click', () => pickPhotos(dayKey(Date.now())));
+    $('photoInput').addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length && photoTargetDay) addPhotos(fs, photoTargetDay); });
+    $('photoClose').addEventListener('click', closePhoto);
+    $('photoDelete').addEventListener('click', deletePhoto);
+    $('photoDlg').addEventListener('cancel', (e) => { e.preventDefault(); closePhoto(); });
+    // sharing
+    $('sheetShareBtn').addEventListener('click', () => openShare(sheetWeek, addDays(sheetWeek, 7), `Week of ${fmtDate(sheetWeek, { month: 'long', day: 'numeric', year: 'numeric' })}`));
+    $('repShareBtn').addEventListener('click', () => { const [f, t] = repRange(); openShare(f, t, rangeLabel(f, t)); });
+    $('shPay').addEventListener('change', refreshShare);
+    $('shNotes').addEventListener('change', refreshShare);
+    $('shareSend').addEventListener('click', sendShare);
+    $('shareCopy').addEventListener('click', copyShare);
+    $('shareClose').addEventListener('click', () => { shareCtx = null; $('shareDlg').close(); });
+    $('readySave').addEventListener('click', () => { $('readyDlg').close(); const p = pendingSave; pendingSave = null; if (p) saveFile(p.blob, p.name, p.type); });
+    $('readyCancel').addEventListener('click', () => { pendingSave = null; $('readyDlg').close(); });
+
     $('sheetDays').addEventListener('click', (ev) => {
+      const ph = ev.target.closest('[data-photo-day]');
+      if (ph) { pickPhotos(ph.dataset.photoDay); return; }
       const a = ev.target.closest('.add-day');
       if (a) { openEdit(null, Number(a.dataset.day)); return; }
       const b = ev.target.closest('.entry'); if (b) openEdit(b.dataset.id);
@@ -927,7 +1339,7 @@
     $('addEntryBtn').addEventListener('click', () => openEdit(null));
     $('sheetPdfBtn').addEventListener('click', () => {
       const from = sheetWeek, to = addDays(sheetWeek, 7);
-      exportPdf(from, to, `Week of ${fmtDate(from, { month: 'long', day: 'numeric', year: 'numeric' })}`, { detail: true, sign: $('optSign').checked });
+      exportPdf(from, to, `Week of ${fmtDate(from, { month: 'long', day: 'numeric', year: 'numeric' })}`, { detail: true, sign: $('optSign').checked, photos: $('optPhotos').checked });
     });
 
     $('editForm').addEventListener('submit', saveEdit);
@@ -952,7 +1364,7 @@
     $('repPdfBtn').addEventListener('click', () => {
       const [from, to] = repRange();
       const typeName = { week: 'Weekly', biweek: 'Bi-weekly', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly', custom: 'Custom' }[repType];
-      exportPdf(from, to, `${typeName} report · ${rangeLabel(from, to)}`, { detail: $('optDetail').checked, sign: $('optSign').checked });
+      exportPdf(from, to, `${typeName} report · ${rangeLabel(from, to)}`, { detail: $('optDetail').checked, sign: $('optSign').checked, photos: $('optPhotos').checked });
     });
     $('repCsvBtn').addEventListener('click', () => { const [from, to] = repRange(); exportCsv(from, to); });
 
@@ -973,8 +1385,9 @@
       if (currentView === 'sheet' && !$('editDlg').open) renderSheet();
       if (currentView === 'reports') renderReports();
     }, 30000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { state = load(); render(); } });
-    window.addEventListener('storage', (e) => { if (e.key === KEY) { state = load(); render(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !viewer) { state = load(); render(); } });
+    window.addEventListener('storage', (e) => { if (e.key === KEY && !viewer) { state = load(); render(); } });
+    window.addEventListener('hashchange', () => location.reload());
 
     // Install prompt (Android / desktop Chrome)
     let deferred = null;
@@ -995,13 +1408,18 @@
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
 
+    // Opened from a shared link? Show that snapshot read-only and never touch this device's own data.
+    const m = /^#view=(.+)$/.exec(location.hash);
+    if (m) { startViewer(m[1]); return; }
+
+    loadPhotos();
     let v = 'clock';
     try { v = sessionStorage.getItem('tc.view') || 'clock'; } catch (e) { /* ignore */ }
     showView(['clock', 'sheet', 'reports', 'settings'].includes(v) ? v : 'clock');
   }
 
   // Expose a tiny hook for tests/debugging
-  window.TimeClock = { get state() { return state; }, summarize, buildPdf };
+  window.TimeClock = { get state() { return state; }, summarize, buildPdf, benefitWeeks, makeShareLink, get photos() { return PH.list; } };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
